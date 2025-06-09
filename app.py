@@ -1,40 +1,29 @@
 import streamlit as st
-import whisper
 import sounddevice as sd
 import numpy as np
-import tempfile
-import os
+import whisper
 import ollama
-import pyttsx3
-from scipy.io.wavfile import write as write_wav
-import io
+import base64
 
-# ========== Audio Recording Settings ==========
 samplerate = 16000
-duration = 5  # seconds per input
+duration = 3  # Shorter duration for faster response
 
-# ========== Load Whisper ==========
 @st.cache_resource
 def load_model():
-    return whisper.load_model("base")
+    return whisper.load_model("tiny")  # Use "tiny" for fastest transcription
+
 model = load_model()
 
-# ========== Init TTS ==========
-engine = pyttsx3.init()
-
-def record_audio(duration=5, samplerate=16000):
+def record_audio(duration=3, samplerate=16000):
     st.info("🎙️ Recording... Speak now!")
     audio = sd.rec(int(duration * samplerate), samplerate=samplerate, channels=1, dtype='float32')
     sd.wait()
     return audio
 
-def audio_to_wav_bytes(audio, samplerate):
-    wav_buffer = io.BytesIO()
-    write_wav(wav_buffer, samplerate, (audio * 32767).astype(np.int16))
-    wav_buffer.seek(0)
-    return wav_buffer
-
 def transcribe_audio(audio, samplerate=16000):
+    import tempfile
+    from scipy.io.wavfile import write as write_wav
+    import os
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         temp_file = f.name
         write_wav(temp_file, samplerate, (audio * 32767).astype(np.int16))
@@ -50,6 +39,10 @@ def chat_with_llama(prompt):
     return response["message"]["content"]
 
 def tts_to_wav_bytes(text):
+    import pyttsx3
+    import tempfile
+    import os
+    engine = pyttsx3.init()
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         temp_path = f.name
     engine.save_to_file(text, temp_path)
@@ -59,18 +52,47 @@ def tts_to_wav_bytes(text):
     os.remove(temp_path)
     return wav_bytes
 
-st.title("🗣️ Voice Assistant with Whisper & LLaMA")
+def autoplay_audio(audio_bytes):
+    b64 = base64.b64encode(audio_bytes).decode()
+    md = f'''
+    <audio id="llama-audio" autoplay>
+    <source src="data:audio/wav;base64,{b64}" type="audio/wav">
+    </audio>
+    '''
+    st.markdown(md, unsafe_allow_html=True)
+
+st.title("⚡ Fast Voice Assistant")
+
+# Session state to track if a reply is being spoken
+if 'speaking' not in st.session_state:
+    st.session_state['speaking'] = False
 
 if st.button("Record and Ask"):
     audio = record_audio(duration, samplerate)
-    st.success("Recording complete!")
-    st.audio(audio_to_wav_bytes(audio, samplerate), format="audio/wav")
     text = transcribe_audio(audio, samplerate)
     st.write("**You said:**", text)
     if text.strip().lower() in ["exit", "quit", "bye"]:
         st.write("👋 Goodbye!")
+        st.session_state['speaking'] = False
     else:
         reply = chat_with_llama(text)
         st.write("**LLaMA:**", reply)
-        # Play in browser
-        st.audio(tts_to_wav_bytes(reply), format="audio/wav")
+        autoplay_audio(tts_to_wav_bytes(reply))
+        st.session_state['speaking'] = True
+
+# Show Stop Speaking button only if currently speaking
+if st.session_state.get('speaking', False):
+    if st.button("Stop Speaking"):
+        # Inject JS to stop and remove the audio element
+        stop_js = """
+        <script>
+        var audio = document.getElementById('llama-audio');
+        if (audio) {
+            audio.pause();
+            audio.currentTime = 0;
+            audio.remove();
+        }
+        </script>
+        """
+        st.markdown(stop_js, unsafe_allow_html=True)
+        st.session_state['speaking'] = False
