@@ -6,6 +6,8 @@ import tempfile
 import os
 import ollama
 import pyttsx3
+conversation_history = []
+
 
 # ========== Audio Recording Settings ==========
 samplerate = 16000
@@ -47,11 +49,22 @@ def record_and_transcribe():
 # ========== Query LLaMA ==========
 def chat_with_llama(prompt):
     print("🤖 Thinking...")
+    
+    # Append user input to conversation history
+    conversation_history.append({"role": "user", "content": prompt})
+    
     response = ollama.chat(
         model="llama3",
-        messages=[{"role": "user", "content": prompt}]
+        messages=conversation_history
     )
-    return response["message"]["content"]
+
+    reply = response["message"]["content"]
+    
+    # Append bot's reply to history
+    conversation_history.append({"role": "assistant", "content": reply})
+    
+    return reply
+
 
 # ========== Speak ==========
 def speak(text):
@@ -69,6 +82,11 @@ if __name__ == "__main__":
             if user_input.strip().lower() in ["exit", "quit", "bye"]:
                 print("👋 Goodbye!")
                 break
+            if user_input.strip().lower() in ["start over", "reset chat"]:
+                conversation_history.clear()
+                print("🔄 Chat history cleared.")
+                continue
+
 
             reply = chat_with_llama(user_input)
             print("LLaMA:", reply)
