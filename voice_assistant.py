@@ -97,19 +97,92 @@ def save_user_profiles(profiles):
     with open(USER_DATA_FILE, "w") as f:
         json.dump(profiles, f)
 
+def is_valid_car_interest(text):
+    """Validate if the interest is car-related, budget-related, or makes sense."""
+    # Keywords that indicate car-related interests
+    car_terms = [
+        "car", "vehicle", "suv", "sedan", "truck", "van", "crossover", "hatchback",
+        "brand", "make", "model", "year", "mileage", "fuel", "electric", "hybrid",
+        "automatic", "manual", "transmission", "engine", "horsepower", "torque",
+        "awd", "4wd", "fwd", "rwd", "drivetrain", "safety", "features", "price",
+        "budget", "cost", "affordable", "luxury", "premium", "economy", "efficient",
+        "spacious", "compact", "family", "sport", "performance", "comfort", "reliable"
+    ]
+    
+    # Keywords that indicate budget-related terms
+    budget_terms = [
+        "budget", "price", "cost", "affordable", "expensive", "cheap", "value",
+        "payment", "finance", "lease", "loan", "down payment", "monthly",
+        "dollar", "euro", "currency", "expensive", "luxury", "premium", "economy"
+    ]
+    
+    text_lower = text.lower()
+    
+    # Check if the text contains any car-related or budget-related terms
+    has_car_term = any(term in text_lower for term in car_terms)
+    has_budget_term = any(term in text_lower for term in budget_terms)
+    
+    # Additional validation rules
+    is_reasonable_length = 3 <= len(text.split()) <= 15  # Not too short, not too long
+    has_no_special_chars = all(c.isalnum() or c.isspace() or c in ".,-" for c in text)
+    
+    # The interest is valid if it's either car-related or budget-related, and meets other criteria
+    return (has_car_term or has_budget_term) and is_reasonable_length and has_no_special_chars
+
+def extract_car_interests(text):
+    """Extract and validate potential car interests from any text."""
+    car_keywords = ["interested in", "like", "prefer", "looking for", "want", "considering", "thinking about"]
+    interests = set()  # Use a set to automatically handle duplicates
+    
+    for keyword in car_keywords:
+        if keyword in text.lower():
+            parts = text.lower().split(keyword)
+            if len(parts) > 1:
+                # Split by common sentence endings and clean up
+                potential_interests = [p.strip().split('.')[0].strip() for p in parts[1:]]
+                for interest in potential_interests:
+                    # Clean up the interest text
+                    interest = ' '.join(interest.split())  # Normalize whitespace
+                    if is_valid_car_interest(interest):
+                        interests.add(interest)
+    
+    return list(interests)
+
 def update_user_interests(user_name, new_interests):
+    """Update user interests with deduplication and validation."""
     if user_name not in user_profiles:
         user_profiles[user_name] = {"interests": []}
     
-    current_interests = set(user_profiles[user_name]["interests"])
-    if isinstance(new_interests, str):
-        new_interests = [new_interests]
+    # Convert existing interests to lowercase for comparison
+    current_interests = {interest.lower(): interest for interest in user_profiles[user_name]["interests"]}
     
+    # Process new interests
     for interest in new_interests:
-        if interest.lower() not in [i.lower() for i in current_interests]:
-            current_interests.add(interest)
+        interest_lower = interest.lower()
+        
+        # Skip if it's a duplicate (case-insensitive)
+        if interest_lower in current_interests:
+            continue
+            
+        # Validate the interest
+        if is_valid_car_interest(interest):
+            # If we have a similar interest, update it with the new one if it's more specific
+            similar_exists = False
+            for existing_lower, existing in current_interests.items():
+                # Check if one is a subset of the other
+                if (interest_lower in existing_lower or existing_lower in interest_lower):
+                    # Keep the more specific version
+                    if len(interest) > len(existing):
+                        current_interests[interest_lower] = interest
+                    similar_exists = True
+                    break
+            
+            # If no similar interest exists, add the new one
+            if not similar_exists:
+                current_interests[interest_lower] = interest
     
-    user_profiles[user_name]["interests"] = list(current_interests)
+    # Update the user profile with the deduplicated and validated interests
+    user_profiles[user_name]["interests"] = list(current_interests.values())
     save_user_profiles(user_profiles)
 
 # ========== Audio Callback ==========
@@ -171,29 +244,18 @@ def record_and_transcribe():
     os.remove(temp_file)
     return result["text"]
 
-def extract_car_interests(text):
-    """Extract potential car interests from any text."""
-    car_keywords = ["interested in", "like", "prefer", "looking for", "want", "considering"]
-    interests = []
-    
-    for keyword in car_keywords:
-        if keyword in text.lower():
-            parts = text.lower().split(keyword)
-            if len(parts) > 1:
-                potential_interest = parts[1].strip().split('.')[0].strip()
-                if any(car_term in potential_interest.lower() for car_term in ["car", "vehicle", "model", "brand", "make"]):
-                    interests.append(potential_interest)
-    
-    return interests
-
 def chat_with_llama(prompt, user_name):
     print("🤖 Thinking...")
     global conversation_summary
     
-    # Extract interests before adding to conversation history
+    # Extract and validate interests before adding to conversation history
     interests = extract_car_interests(prompt)
     if interests:
         update_user_interests(user_name, interests)
+        # Add a system message about the updated interests
+        if interests:
+            interest_update = f"User has expressed interest in: {', '.join(interests)}"
+            conversation_history.append({"role": "system", "content": interest_update})
     
     # Add user prompt to conversation history
     conversation_history.append({"role": "user", "content": prompt})
